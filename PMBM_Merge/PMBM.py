@@ -76,6 +76,8 @@ class PMBMfilter():
         # update detected objects
         m1_d = sum(used_z1_d)
         m2_d = sum(used_z2_d)
+        z1_in_gate_d = [[z1_in_gate_d[i][j] for j in range(m1) if used_z1_d[j]] for i in range(nd)]
+        z2_in_gate_d = [[z2_in_gate_d[i][j] for j in range(m2) if used_z2_d[j]] for i in range(nd)]
         z1_d = [z1[i] for i in range(m1) if used_z1_d[i]]
         z2_d = [z2[i] for i in range(m2) if used_z2_d[i]]
 
@@ -106,6 +108,10 @@ class PMBMfilter():
                             continue
                         like_table[i, j, k] = obj.detected_bern_update([[z1_d[i - 1]], [z2_d[k - 1]]])
                         hypo_table[i][j][k] = deepcopy(obj)
+
+        # undetected objects
+        z1_in_gate_d_and_u = [[z1_in_gate_u[i][j] for j in range(m1) if used_z1_d[j]] for i in range(nu)]
+        z2_in_gate_d_and_u = [[z2_in_gate_u[i][j] for j in range(m2) if used_z2_d[j]] for i in range(nu)]
 
         # permutation all meas2
 
