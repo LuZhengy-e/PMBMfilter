@@ -27,7 +27,7 @@ class Bernoulli(Kalman_Filter):
 
     def detected_bern_update(self, meas):
         merge = False
-        # Sg = 1
+        Sg = 0
         if not meas[0]:
             z = meas[1]
             pd = (1 - self.pd1) * self.pd2
@@ -35,11 +35,11 @@ class Bernoulli(Kalman_Filter):
             z = meas[2]
             pd = (1 - self.pd2) * self.pd1
         else:
+            Sg = self.calculate_logscale(meas[0], meas[1])
             z = (meas[0] + meas[1]) / 2
             self.R /= 2
             pd = self.pd1 * self.pd2
             merge = True
-            Sg = self.calculate_logscale(meas[0], meas[1])
 
         l = self.calculate_logweight(self.x, self.P, z) + np.log(pd) + np.log(self.r) + Sg
         self.r = 1

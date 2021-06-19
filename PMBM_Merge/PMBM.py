@@ -8,6 +8,7 @@ ROOT_PATH = os.path.abspath(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 sys.path.append(ROOT_PATH)
 
 from Poisson import Poisson
+from Bernoulli import Bernoulli
 from utils.Parameter_set import CVMotionModel, DisMeasureModel
 
 
@@ -94,26 +95,96 @@ class PMBMfilter():
                         obj = deepcopy(self.detected_objects[j])
                         if not z2_in_gate_d[j][k]:
                             continue
-                        like_table[i, j, k] = obj.detected_bern_update([[], [z2_d[k - 1]]])
+                        like_table[i, j, k] = obj.detected_bern_update([[], z2_d[k - 1]])
                         hypo_table[i][j][k] = deepcopy(obj)
                     elif i != 0 and k == 0:
                         obj = deepcopy(self.detected_objects[j])
                         if not z1_in_gate_d[j][i]:
                             continue
-                        like_table[i, j, k] = obj.detected_bern_update([[z1_d[i - 1]], []])
+                        like_table[i, j, k] = obj.detected_bern_update([z1_d[i - 1], []])
                         hypo_table[i][j][k] = deepcopy(obj)
                     else:
                         obj = deepcopy(self.detected_objects[j])
-                        if not (z1_in_gate_d[j][i] or z2_in_gate_d[j][k]):
+                        if not (z1_in_gate_d[j][i] and z2_in_gate_d[j][k]):
                             continue
-                        like_table[i, j, k] = obj.detected_bern_update([[z1_d[i - 1]], [z2_d[k - 1]]])
+                        like_table[i, j, k] = obj.detected_bern_update([z1_d[i - 1], z2_d[k - 1]])
                         hypo_table[i][j][k] = deepcopy(obj)
 
         # undetected objects
         z1_in_gate_d_and_u = [[z1_in_gate_u[i][j] for j in range(m1) if used_z1_d[j]] for i in range(nu)]
         z2_in_gate_d_and_u = [[z2_in_gate_u[i][j] for j in range(m2) if used_z2_d[j]] for i in range(nu)]
+        hypo_table_u = [[None] * (m2_d + 1) for _ in range(m1_d + 1)]
+        like_table_u = np.ones(shape=(m1_d + 1, m2_d + 1), dtype=float) * np.log(self.intensity_c)
+        for i in range(m1_d + 1):
+            for k in range(m2_d + 1):
+                undetected_objs_0 = [None] * nu
+                undetected_objs_1 = [None] * nu
+                undetected_objs_01 = [None] * nu
+                for j in range(nu):
+                    if i == 0 and k == 0:
+                        obj = deepcopy(self.undetected_objects[j])
+                        obj.undetected_poisson_update()
+                        hypo_table_u[i][k] = deepcopy(obj)
+
+                    elif i == 0 and k != 0:
+                        if not z2_in_gate_d_and_u[j][k]:
+                            continue
+                        obj = deepcopy(self.undetected_objects[j])
+                        obj.detected_poisson_update([[], z2_d[k - 1]])
+                        undetected_objs_1[j] = deepcopy(obj)
+
+                    elif i != 0 and k == 0:
+                        if not z1_in_gate_d_and_u[j][i]:
+                            continue
+                        obj = deepcopy(self.undetected_objects[j])
+                        obj.detected_poisson_update([z1_d[i - 1], []])
+                        undetected_objs_0[j] = deepcopy(obj)
+
+                    else:
+                        if not (z1_in_gate_d_and_u[j][i] and z2_in_gate_d_and_u[j][k]):
+                            continue
+                        obj = deepcopy(self.undetected_objects[j])
+                        obj.detected_poisson_update(z1_d[i - 1], z2_d[k - 1])
+                        undetected_objs_01[j] = deepcopy(obj)
+
+                if i == 0 and k != 0:
+                    if not undetected_objs_1:
+                        continue
+                    x, P, rho = self.componentmatching(undetected_objs_1)
+                    exp_weight = 1 + rho
+                    new_r = rho / exp_weight
+                    new_obj = Bernoulli(x, P, new_r, 0, self.motion_model, self.meas_model,
+                                        self.ps, self.pd1, self.intensity_c)
+                    hypo_table_u[i][k] = deepcopy(new_obj)
+                    like_table_u[i, k] = np.log(exp_weight)
+
+                elif i != 0 and k == 0:
+                    if not undetected_objs_0:
+                        continue
+                    x, P, rho = self.componentmatching(undetected_objs_1)
+                    exp_weight = self.intensity_c + rho
+                    new_r = rho / exp_weight
+                    new_obj = Bernoulli(x, P, new_r, 0, self.motion_model, self.meas_model,
+                                        self.ps, self.pd1, self.intensity_c)
+                    hypo_table_u[i][k] = deepcopy(new_obj)
+                    like_table_u[i, k] = np.log(exp_weight)
+
+                elif i != 0 and k != 0:
+                    if not undetected_objs_01:
+                        continue
+                    x, P, rho = self.componentmatching(undetected_objs_01)
+                    new_obj = Bernoulli(x, P, 1, 0, self.motion_model, self.meas_model,
+                                        self.ps, self.pd1, self.intensity_c)
+                    hypo_table_u[i][k] = deepcopy(new_obj)
+                    like_table_u[i, k] = np.log(rho)
 
         # permutation all meas2
+        used_z2_d_and_u = [used_z2_u[k] for k in range(m2) if used_z2_d[k]]
+        all_probably_permutation = []
+        meas_index_list = list(range(m2_d))
+        self.permutation(meas_index_list, used_z2_d_and_u, 0, [], all_probably_permutation)
+        for single_z2 in all_probably_permutation:
+            pass
 
     def prune(self, prune_hypo, prune_bern, prune_poisson):
         print("-----------prune----------")
@@ -148,9 +219,34 @@ class PMBMfilter():
         return z_in_gate
 
     @staticmethod
-    def permutation(meas_list):
-        return meas_list
+    def permutation(meas_list, used_d_and_u, k, path, result):
+        if not meas_list:
+            return
+        result.append(path)
+        for i in range(k, len(meas_list)):
+            if not used_d_and_u[i]:
+                continue
+            PMBMfilter.permutation(meas_list, used_d_and_u, i + 1, path + [meas_list[i]], result)
 
     @staticmethod
     def combination(confirm_matrix):
         return confirm_matrix
+
+    @staticmethod
+    def componentmatching(poisson_obj_set):
+        w = 0
+        x = 0
+        for obj in poisson_obj_set:
+            if not obj:
+                continue
+            w += obj.w
+            x += obj.w * obj.x
+
+        x = x / w
+        P = np.zeros(shape=poisson_obj_set[0].P.shape)
+
+        for obj in poisson_obj_set:
+            P += obj.w * (obj.P + np.dot((obj.x - x), (obj.x - x).T))
+
+        P = P / w
+        return x, P, w
