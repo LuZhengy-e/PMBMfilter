@@ -1,15 +1,17 @@
-import numpy as np
-import sys
 import os
+import sys
 from copy import deepcopy
+
+import numpy as np
 from scipy.stats.distributions import chi2
+from scipy.optimize import linear_sum_assignment as linear_assignment
 
 ROOT_PATH = os.path.abspath(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(ROOT_PATH)
 
-from Poisson import Poisson
 from Bernoulli import Bernoulli
-from utils.Parameter_set import CVMotionModel, DisMeasureModel
+
+MAX_VALUE = 1e8
 
 
 class PMBMfilter():
@@ -83,7 +85,7 @@ class PMBMfilter():
         z2_d = [z2[i] for i in range(m2) if used_z2_d[i]]
 
         hypo_table = [[[None] * (m2_d + 1) for _ in range(nd)] for _ in range(m1_d + 1)]
-        like_table = - np.ones(shape=(m1_d + 1, nd, m2_d + 1), dtype=float) * np.inf
+        like_table = - np.ones(shape=(m1_d + 1, nd, m2_d + 1), dtype=float) * MAX_VALUE
         for i in range(m1_d + 1):
             for j in range(nd):
                 for k in range(m2_d + 1):
@@ -179,12 +181,71 @@ class PMBMfilter():
                     like_table_u[i, k] = np.log(rho)
 
         # permutation all meas2
+        used_z1_d_and_u = [used_z1_u[i] for i in range(m1) if used_z1_d[i]]
         used_z2_d_and_u = [used_z2_u[k] for k in range(m2) if used_z2_d[k]]
         all_probably_permutation = []
         meas_index_list = list(range(m2_d))
         self.permutation(meas_index_list, used_z2_d_and_u, 0, [], all_probably_permutation)
+
+        max_log_weight = -MAX_VALUE
+        max_row, max_col = None, None
         for single_z2 in all_probably_permutation:
-            pass
+            init_weight = 0
+            res_meas_idx_list = [idx for idx in meas_index_list if idx not in single_z2]
+            res_cz = np.log(self.intensity_c) * len(res_meas_idx_list)
+            for idx in single_z2:
+                init_weight += like_table_u[0, idx + 1]
+            """
+            get all possible combination hypothesis:
+            1. use murty to get all combinations of meas1 and objeccts
+            2. use munkres to get best combinations of objects and meas2
+            """
+            # construct confirm matrix
+            C1 = np.ones(shape=(m1_d, nd))
+            C2 = np.ones(shape=(m1_d, m1_d)) * MAX_VALUE
+            for i in range(m1_d):
+                for j in range(nd):
+                    if not z1_in_gate_d[j][i]:
+                        C1[i, j] = MAX_VALUE
+                C2[i, i] = 1
+            C = np.concatenate((C1, C2), axis=1)
+            all_probably_combination = self.combination(C)
+            # for each combination, construct loss matrix
+            for row, col in all_probably_combination:
+                new_obj_meas_list = [i for i in list(col) if i >= nd]  # save new obj2meas1 index
+                num_new_objs = np.sum(col >= nd)
+                L1 = np.ones((nd + num_new_objs, len(res_meas_idx_list)), dtype=float) * -MAX_VALUE
+                L2 = np.ones((nd + num_new_objs, nd + num_new_objs), dtype=float) * -MAX_VALUE
+                for r in range(nd + num_new_objs):
+                    for c in range(len(res_meas_idx_list)):
+                        if r < nd and (r not in col):
+                            idx_2 = res_meas_idx_list[c]
+                            if z2_in_gate_d[r][idx_2]:
+                                L1[r, c] = like_table[0, r, idx_2 + 1] - np.log(self.intensity_c)
+                        elif r < nd and (r in col):
+                            idx_2 = res_meas_idx_list[c]
+                            idx_1 = col.index(r)
+                            if z2_in_gate_d[r][idx_2]:
+                                L1[r, c] = like_table[idx_1 + 1, r, idx_2 + 1] - np.log(self.intensity_c)
+                        elif r >= nd:
+                            idx_2 = res_meas_idx_list[c]
+                            idx_1 = col.index(new_obj_meas_list[r - nd])
+                            if used_z2_d_and_u[idx_2]:
+                                L1[r, c] = like_table_u[idx_1 + 1, idx_2 + 1] - np.log(self.intensity_c)
+                    if r < nd and (r not in col):
+                        L2[r, r] = like_table[0, r, 0]
+                    elif r < nd and (r in col):
+                        idx_1 = col.index(r)
+                        L2[r, r] = like_table[idx_1 + 1, r, 0]
+                    elif r >= nd:
+                        idx_1 = col.index(new_obj_meas_list[r - nd])
+                        L2[r, r] = like_table_u[idx_1 + 1, 0]
+                L = -np.concatenate((L1, L2), axis=1)
+                row_, col_ = linear_assignment(L)
+                log_weight = - np.sum(L(row_, col_)) + res_cz + init_weight
+                if log_weight > max_log_weight:
+                    max_log_weight = log_weight
+                    max_row, max_col = row_, col_
 
     def prune(self, prune_hypo, prune_bern, prune_poisson):
         print("-----------prune----------")
@@ -230,7 +291,40 @@ class PMBMfilter():
 
     @staticmethod
     def combination(confirm_matrix):
-        return confirm_matrix
+        # murty algorithm
+        row, col = linear_assignment(confirm_matrix)
+        cost = confirm_matrix[row, col].sum()
+        best_assign = []
+        best_costs = []
+        node_list = [confirm_matrix]
+        cost_list = [cost]
+        assign_list = [(row, col)]
+        while cost_list:
+            min_cost = min(cost_list)
+            best_costs.append(min_cost)
+            min_index = cost_list.index(min_cost)
+            cost_list.pop(min_index)
+            assignment = assign_list.pop(min_index)
+            best_assign.append(assignment)
+            pre_matrix = node_list.pop(min_index)
+
+            for i in range(confirm_matrix.shape[0]):
+                node = deepcopy(pre_matrix)
+                m, n = assignment[0][i], assignment[1][i]
+                node[m, n] = MAX_VALUE
+                row_, col_ = linear_assignment(node)
+                cost_ = node[row_, col_].sum()
+                if cost_ < MAX_VALUE:
+                    node_list.append(node)
+                    assign_list.append((row_, col_))
+                    cost_list.append(cost_)
+
+                cur_value = pre_matrix[m, n]
+                pre_matrix[m, :] = MAX_VALUE
+                pre_matrix[:, n] = MAX_VALUE
+                pre_matrix[m, n] = cur_value
+
+        return best_assign
 
     @staticmethod
     def componentmatching(poisson_obj_set):
