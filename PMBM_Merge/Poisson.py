@@ -21,10 +21,10 @@ class Poisson(Kalman_Filter):
 
     def detected_poisson_update(self, meas):
         Sg = 0
-        if not meas[0]:
+        if meas[0] is None:
             z = meas[1]
             pd = (1 - self.pd1) * self.pd2
-        elif not meas[1]:
+        elif meas[1] is None:
             z = meas[0]
             pd = (1 - self.pd2) * self.pd1
         else:
@@ -33,7 +33,8 @@ class Poisson(Kalman_Filter):
             self.R /= 2
             pd = self.pd1 * self.pd2
 
-        self.w += np.exp(self.calculate_logweight(self.x, self.P, z) + np.log(pd) + Sg)
+        self.w += self.calculate_logweight(self.x, self.P, z) + np.log(pd) + Sg
+        self.w = np.exp(self.w)
         self.x, self.P = self.update(self.x, self.P, z)
 
     def calculate_logweight(self, x, P, z):

@@ -15,7 +15,7 @@ sys.path.append(ROOT_PATH)
 from utils.Parameter_set import CVMotionModel, DisMeasureModel
 from utils import Plot
 
-COLORMAP = ['red', 'yellow', 'green', 'blue', 'purple']
+COLORMAP = ['red', 'yellow', 'green', 'blue', 'purple', 'black', 'magenta', 'cyan']
 
 
 def generate_one_traj(traj_init, Motion_model, noise=False):
@@ -102,7 +102,7 @@ def main(traj: dict, meas: list):
     prune_hypo, prune_poisson, prune_bern = 1e-4, 1e-4, 1e-4
 
     total_time = len(meas)
-    tracking = [None for _ in range(total_time)]
+    tracking = [[] for _ in range(total_time)]
     for t in tqdm(range(total_time)):
         pmbm.predict()
         pmbm.update(z=meas_list[t])
@@ -117,7 +117,12 @@ def main(traj: dict, meas: list):
             end_time = traj_dict[idx]['end time']
             if start_time <= t < end_time:
                 state = traj_dict[idx]['state'][t - start_time]
-                plt.scatter(x=state[0], y=state[1], c=COLORMAP[idx % 5], s=3)
+                plt.scatter(x=state[0], y=state[1], c=COLORMAP[idx % 8], s=3)
+
+        for obj in tracking[t]:
+            idx = obj.id
+            state = obj.x
+            plt.scatter(x=state[0], y=state[1], c=COLORMAP[idx % 8], s=6, marker='s')
     plt.show()
 
 
@@ -143,12 +148,12 @@ if __name__ == '__main__':
         num_traj = len(init_traj)
         for idx in range(num_traj):
             traj_idx = init_traj[idx]
-            traj_dict[idx] = generate_one_traj(traj_idx, motion_model, noise=True)
+            traj_dict[idx] = generate_one_traj(traj_idx, motion_model, noise=False)
         traj_dict['num'] = num_traj
 
         # Measurement generation
         max_end_time = 100
-        pd = 0.8
+        pd = 0.99
         num_sensors = 2
         for t in range(max_end_time):
             meas_t = [[] for _ in range(num_sensors)]
