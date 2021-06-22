@@ -422,7 +422,9 @@ class PMBMfilter():
             self.detected_objects.append(deepcopy(new_obj))
             self.max_id += 1
 
-        self.undetected_objects = []
+        # undetected undetected objects
+        for poi_comp in self.undetected_objects:
+            poi_comp.undetected_poisson_update()
 
     def prune(self, prune_hypo, prune_bern, prune_poisson):
         print("-----------prune----------")
@@ -444,7 +446,7 @@ class PMBMfilter():
             if bern_comp.r > extract:
                 extract_object.append(deepcopy(bern_comp))
 
-        return extract_object
+        return len(self.detected_objects), extract_object
 
     @staticmethod
     def calculate_gate(obj, gate_size, z):

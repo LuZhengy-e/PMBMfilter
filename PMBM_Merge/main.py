@@ -18,7 +18,7 @@ from utils import Plot
 COLORMAP = ['red', 'yellow', 'green', 'blue', 'purple', 'black', 'magenta', 'cyan']
 
 
-def generate_one_traj(traj_init, Motion_model, noise=False):
+def generate_one_traj(traj_init, Motion_model, T, noise=False):
     """
     traj_init: a initial dict of one trajectory
     Motion_model: motion model
@@ -29,7 +29,7 @@ def generate_one_traj(traj_init, Motion_model, noise=False):
     end_time = traj_init['end time']
     state = []
     cur_state = traj_init['start state']
-    for i in range(end_time - start_time):
+    for i in range(int((end_time - start_time) / T)):
         state.append(cur_state)
         cur_state = np.dot(Motion_model.F, cur_state)
         if noise:
@@ -86,9 +86,9 @@ def main(traj: dict, meas: list):
     meas_model = DisMeasureModel()
     birth_state = np.array([[0, 100, 100, 0],
                             [0, 100, 0, 100],
-                            [1, -1, -1, 1],
-                            [1, -1, 1, -1]])
-    birth_cov = 2 * np.identity(4)
+                            [5, -5, -5, 5],
+                            [5, -5, 5, -5]])
+    birth_cov = 1 * np.identity(4)
     birth_weight = [0.5, 0.5, 0.5, 0.5]
     num_birth = birth_state.shape[1]
     birth_model = []
@@ -103,26 +103,53 @@ def main(traj: dict, meas: list):
 
     total_time = len(meas)
     tracking = [[] for _ in range(total_time)]
+    number = [0 for _ in range(total_time)]
     for t in tqdm(range(total_time)):
         pmbm.predict()
         pmbm.update(z=meas_list[t])
         pmbm.prune(prune_hypo, prune_bern, prune_poisson)
-        tracking[t] = pmbm.estimate(0.5)
-    # debug plot
-    plt.figure()
+        number[t], tracking[t] = pmbm.estimate(0.5)
+
+    # from IPython import embed
+    # embed()
+    fig1 = plt.figure()
     # plt.ion()
     for t in range(total_time):
         for idx in range(traj['num']):
             start_time = traj_dict[idx]['start time']
             end_time = traj_dict[idx]['end time']
-            if start_time <= t < end_time:
-                state = traj_dict[idx]['state'][t - start_time]
+            if start_time <= t * T < end_time:
+                state = traj_dict[idx]['state'][t - int(start_time / T)]
                 plt.scatter(x=state[0], y=state[1], c=COLORMAP[idx % 8], s=3)
+
+        for meas_i in meas_list[t]:
+            for meas in meas_i:
+                plt.scatter(x=meas[0], y=meas[1], c='black', s=2, marker='*')
 
         for obj in tracking[t]:
             idx = obj.id
             state = obj.x
-            plt.scatter(x=state[0], y=state[1], c=COLORMAP[idx % 8], s=6, marker='s')
+            plt.scatter(x=state[0], y=state[1], c=COLORMAP[idx % 8], s=7, marker='s')
+
+    plt.xlabel(xlabel='x position/m')
+    plt.ylabel(ylabel='y position/m')
+    plt.show()
+
+    fig2 = plt.figure()
+    real_number = []
+    for t in range(total_time):
+        num_cur = 0
+        for idx in range(traj['num']):
+            start_time = traj_dict[idx]['start time']
+            end_time = traj_dict[idx]['end time']
+            if start_time <= t * T < end_time:
+                num_cur += 1
+        real_number.append(num_cur)
+
+        plt.scatter(x=t, y=number[t], s=5, marker='o', c='red')
+    plt.plot(list(range(total_time)), real_number)
+    plt.xlabel(xlabel='time')
+    plt.ylabel(ylabel='number')
     plt.show()
 
 
@@ -131,40 +158,47 @@ if __name__ == '__main__':
     parser.add_argument("--input", type=str, default='self', help='where the input from')
     parser.add_argument("--output-dir", type=str, help='output dictionary')
     args = parser.parse_args()
-    # np.random.seed(1)
+    np.random.seed(157)
 
     traj_dict = {}
     meas_list = []
     if args.input == 'self':
-        T = 1
-        motion_model = CVMotionModel(T, sigma=0.25)
-        meas_model = DisMeasureModel(sigma=3)
+        T = 0.5
+        motion_model = CVMotionModel(T, sigma=0.5)
+        meas_model = DisMeasureModel(sigma=1.5)
         init_traj = [{'start time': 0, 'end time': 100, 'start state': np.array([0, 0, 6, 8]).T},
-                     {'start time': 0, 'end time': 100, 'start state': np.array([100, 100, -8, -6]).T},
+                     {'start time': 0, 'end time': 100, 'start state': np.array([100, 100, -6, -8]).T},
                      {'start time': 5, 'end time': 100, 'start state': np.array([1, 0, 5, 5]).T},
-                     {'start time': 10, 'end time': 75, 'start state': np.array([100, 100, -7, -1]).T},
-                     {'start time': 0, 'end time': 100, 'start state': np.array([100, 0, -3, 5]).T}]
+                     {'start time': 10, 'end time': 75, 'start state': np.array([101, 99, -8, -6]).T},
+                     {'start time': 0, 'end time': 100, 'start state': np.array([101, 0, -6, 5]).T}]
         # Data generation
         num_traj = len(init_traj)
         for idx in range(num_traj):
             traj_idx = init_traj[idx]
-            traj_dict[idx] = generate_one_traj(traj_idx, motion_model, noise=False)
+            traj_dict[idx] = generate_one_traj(traj_idx, motion_model, T, noise=True)
         traj_dict['num'] = num_traj
 
         # Measurement generation
         max_end_time = 100
-        pd = 0.99
+        pd = 0.8
         num_sensors = 2
-        for t in range(max_end_time):
+        num_clutter = 15
+        for t in range(0, int(max_end_time / T)):
             meas_t = [[] for _ in range(num_sensors)]
             for idx in range(num_traj):
                 start_time = traj_dict[idx]['start time']
                 end_time = traj_dict[idx]['end time']
-                if start_time <= t < end_time:
-                    state = traj_dict[idx]['state'][t - start_time]
+                if start_time <= t * T < end_time:
+                    state = traj_dict[idx]['state'][t - int(start_time / T)]
                     meas_t_idx = generate_measurement(state, num_sensors, pd, meas_model)
                     for i in range(num_sensors):
                         meas_t[i].extend(meas_t_idx[i])
+
+            # create clutters
+            for i in range(num_sensors):
+                for j in range(num_clutter):
+                    z_c = (np.random.rand(2) - 0.5) * 2000
+                    meas_t[i].append(z_c)
             meas_list.append(meas_t)
 
     elif args.input == 'sumo':
